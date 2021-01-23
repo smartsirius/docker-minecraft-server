@@ -3,28 +3,40 @@
 . ${SCRIPTS:-/}start-utils
 
 if [ -n "$OPS" ]; then
-  log "Setting/adding ops"
-  rm -rf /data/ops.txt.converted
+  log "Updating ops"
+  rm -f /data/ops.txt.converted
   echo $OPS | awk -v RS=, '{print}' > /data/ops.txt
+
+  if isTrue "${OVERRIDE_OPS}"; then
+    log "Recreating ops.json file at server startup"
+    rm -f /data/ops.json
+  fi
 fi
 
 if [ -n "$WHITELIST" ]; then
-  log "Setting whitelist"
-  rm -rf /data/white-list.txt.converted
+  log "Updating whitelist"
+  rm -f /data/white-list.txt.converted
   echo $WHITELIST | awk -v RS=, '{print}' > /data/white-list.txt
+
+  if isTrue "${OVERRIDE_WHITELIST}"; then
+    log "Recreating whitelist.json file at server startup"
+    rm -f /data/whitelist.json
+  fi
 fi
 
-if [ -n "$ICON" -a ! -e server-icon.png ]; then
-  log "Using server icon from $ICON..."
-  # Not sure what it is yet...call it "img"
-  curl -sSL -o /tmp/icon.img $ICON
-  specs=$(identify /tmp/icon.img | awk '{print $2,$3}')
-  if [ "$specs" = "PNG 64x64" ]; then
-    mv /tmp/icon.img /data/server-icon.png
-  else
-    log "Converting image to 64x64 PNG..."
-    convert /tmp/icon.img -resize 64x64! /data/server-icon.png
-  fi
+if [ -n "$ICON" ]; then
+    if [ ! -e server-icon.png ] || [ "${OVERRIDE_ICON}" == "TRUE" ]; then
+      log "Using server icon from $ICON..."
+      # Not sure what it is yet...call it "img"
+      curl -sSL -o /tmp/icon.img $ICON
+      specs=$(identify /tmp/icon.img | awk '{print $2,$3}')
+      if [ "$specs" = "PNG 64x64" ]; then
+        mv /tmp/icon.img /data/server-icon.png
+      else
+        log "Converting image to 64x64 PNG..."
+        convert /tmp/icon.img -resize 64x64! /data/server-icon.png
+      fi
+    fi
 fi
 
 if ! isTrue ${SKIP_LOG4J_CONFIG}; then
@@ -46,26 +58,6 @@ for j in $JSON_FILES; do
   if [[ $(cat "$j" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//') == "" ]]; then
     log "Fixing JSON $j"
     echo '[]' > $j
-  fi
-done
-
-
-# If any modules have been provided, copy them over
-if [ -d /mods ]; then
-  log "Copying any mods over..."
-  mkdir -p /data/mods
-  if isTrue "${REMOVE_OLD_MODS}"; then
-    rsyncArgs=(--delete)
-  fi
-  rsync -a --out-format="update:%f:Last Modified %M" "${rsyncArgs[@]}" --prune-empty-dirs --update /mods /data
-fi
-
-[ -d /data/config ] || mkdir /data/config
-for c in /config/*
-do
-  if [ -f "$c" ]; then
-    log Copying configuration $(basename "$c")
-    cp -rf "$c" /data/config
   fi
 done
 
@@ -166,11 +158,11 @@ JVM_OPTS="-Xms${INIT_MEMORY} -Xmx${MAX_MEMORY} ${JVM_OPTS}"
 function copyFilesForCurseForge() {
   # copy player modification files unconditionally since their
   # processing into json is additive anyway
-  [ -f /data/ops.txt ] && cp -f /data/ops.txt ${FTB_DIR}/
-  [ -f /data/white-list.txt ] && cp -f /data/white-list.txt ${FTB_DIR}/
+  [ -f /data/ops.txt ] && cp -f /data/ops.txt "${FTB_DIR}/"
+  [ -f /data/white-list.txt ] && cp -f /data/white-list.txt "${FTB_DIR}/"
 
   if [ ! -e "${FTB_DIR}/server-icon.png" -a -e /data/server-icon.png ]; then
-    cp -f /data/server-icon.png ${FTB_DIR}/
+    cp -f /data/server-icon.png "${FTB_DIR}/"
   fi
 
   cp -f /data/eula.txt "${FTB_DIR}/"

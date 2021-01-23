@@ -146,13 +146,16 @@ To use a different version of Java, please use a docker tag to run your Minecraf
 
 | Tag name       | Description                                 | Linux        |
 | -------------- | ------------------------------------------- | ------------ |
-| latest         | **Default**. Uses Java version 8 update 212 | Alpine Linux |
-| adopt14        | Uses Java version 14 latest update          | Alpine Linux |
-| adopt13        | Uses Java version 13 latest update          | Alpine Linux |
-| adopt11        | Uses Java version 11 latest update          | Alpine Linux |
+| latest         | **Default**. Uses Java version 8            | Alpine Linux |
+| adopt15        | Uses Java version 15 from AdoptOpenJDK      | Alpine Linux |
+| adopt14        | Uses Java version 14 from AdoptOpenJDK      | Alpine Linux |
+| adopt13        | Uses Java version 13 from AdoptOpenJDK      | Alpine Linux |
+| adopt11        | Uses Java version 11 from AdoptOpenJDK      | Alpine Linux |
 | openj9         | Uses Eclipse OpenJ9 JVM                     | Alpine Linux |
+| openj9-11      | Uses Eclipse OpenJ9 JVM for Java 11         | Alpine Linux |
 | openj9-nightly | Uses Eclipse OpenJ9 JVM testing builds      | Alpine Linux |
 | multiarch      | Uses Java version 8 latest update           | Debian Linux |
+| multiarch-latest | Uses Java version 15 latest update        | Debian Linux |
 
 For example, to use a Java version 13:
 
@@ -180,11 +183,9 @@ healthy
 
 Some orchestration systems, such as Portainer, don't allow for disabling the default `HEALTHCHECK` declared by this image. In those cases you can approximate the disabling of healthchecks by setting the environment variable `DISABLE_HEALTHCHECK` to `true`.
 
-## Autopause (experimental)
+## Autopause
 
 ### Description
-
-> EXPERIMENTAL: this feature only works with default bridge networking using official Docker distributions. Host networking and container management software, such as Portainer, and NAS solutions do not seem to provide compatible networking.
 
 There are various bug reports on [Mojang](https://bugs.mojang.com) about high CPU usage of servers with newer versions, even with few or no clients connected (e.g. [this one](https://bugs.mojang.com/browse/MC-149018), in fact the functionality is based on [this comment in the thread](https://bugs.mojang.com/browse/MC-149018?focusedCommentId=593606&page=com.atlassian.jira.plugin.system.issuetabpanels%3Acomment-tabpanel#comment-593606)).
 
@@ -192,9 +193,11 @@ An autopause functionality has been added to this image to monitor whether clien
 
 Of course, even loaded chunks are not ticked when the process is stopped.
 
-From the server's point of view, the pausing causes a single tick to take as long as the process is stopped, so the server watchdog might intervene after the process is continued, possibly forcing a container restart. To prevent this, ensure that the `max-tick-time` in the `server.properties` file is set correctly.
+From the server's point of view, the pausing causes a single tick to take as long as the process is stopped, so the server watchdog might intervene after the process is continued, possibly forcing a container restart. To prevent this, ensure that the `max-tick-time` in the `server.properties` file is set correctly. Non-vanilla versions might have their own configuration file, you might have to disable their watchdogs separately (e.g. PAPER Servers).
 
 On startup the `server.properties` file is checked and, if applicable, a warning is printed to the terminal. When the server is created (no data available in the persistent directory), the properties file is created with the Watchdog disabled.
+
+The utility used to wake the server (`knock(d)`) works at network interface level. So the correct interface has to be set using the `AUTOPAUSE_KNOCK_INTERFACE` variable when using non-default networking environments (e.g. host-networking, Portainer oder NAS solutions). See the description of the variable below.
 
 A starting, example compose file has been provided in [examples/docker-compose-autopause.yml](examples/docker-compose-autopause.yml).
 
@@ -206,7 +209,7 @@ Enable the Autopause functionality by setting:
 -e ENABLE_AUTOPAUSE=TRUE
 ```
 
-There are 4 more environment variables that define the behaviour:
+The following environment variables define the behaviour of auto-pausing:
 * `AUTOPAUSE_TIMEOUT_EST`, default `3600` (seconds)
 describes the time between the last client disconnect and the pausing of the process (read as timeout established)
 * `AUTOPAUSE_TIMEOUT_INIT`, default `600` (seconds)
@@ -215,6 +218,8 @@ describes the time between server start and the pausing of the process, when no 
 describes the time between knocking of the port (e.g. by the main menu ping) and the pausing of the process, when no client connects inbetween (read as timeout knocked)
 * `AUTOPAUSE_PERIOD`, default `10` (seconds)
 describes period of the daemonized state machine, that handles the pausing of the process (resuming is done independently)
+* `AUTOPAUSE_KNOCK_INTERFACE`, default `eth0`
+<br>Describes the interface passed to the `knockd` daemon. If the default interface does not work, run the `ifconfig` command inside the container and derive the interface receiving the incoming connection from its output. The passed interface must exist inside the container. Using the loopback interface (`lo`) does likely not yield the desired results.
 
 ## Deployment Templates and Examples
 
@@ -233,12 +238,13 @@ If you're looking for a simple way to deploy this to the Amazon Web Services Clo
 
 ## Running a Forge Server
 
-Enable Forge server mode by adding a `-e TYPE=FORGE` to your command-line.
-By default the container will run the `RECOMMENDED` version of [Forge server](http://www.minecraftforge.net/wiki/)
-but you can also choose to run a specific version with `-e FORGEVERSION=10.13.4.1448`.
+Enable [Forge server](http://www.minecraftforge.net/wiki/) mode by adding a `-e TYPE=FORGE` to your command-line.
+
+The overall version is specified by `VERSION`, [as described in the section above](#versions) and will run the recommended Forge version by default. You can also choose to run a specific Forge version with `FORGEVERSION`, such as `-e FORGEVERSION=14.23.5.2854`.
 
     $ docker run -d -v /path/on/host:/data \
-        -e TYPE=FORGE -e FORGEVERSION=10.13.4.1448 \
+        -e TYPE=FORGE \
+        -e VERSION=1.12.2 -e FORGEVERSION=14.23.5.2854 \
         -p 25565:25565 -e EULA=TRUE --name mc itzg/minecraft-server
 
 To use a pre-downloaded Forge installer, place it in the attached `/data` directory and
@@ -301,13 +307,17 @@ or downloading a world with the `WORLD` option.
 
 There are two additional volumes that can be mounted; `/mods` and `/config`.
 Any files in either of these filesystems will be copied over to the main
-`/data` filesystem before starting Minecraft. If you want old mods to be removed as the `/mods` content is updated, then add `-e REMOVE_OLD_MODS=TRUE`.
+`/data` filesystem before starting Minecraft. If you want old mods to be removed as the `/mods` content is updated, then add `-e REMOVE_OLD_MODS=TRUE`. If you are running a `BUKKIT` distribution this will affect all files inside the `plugins/` directory. You can fine tune the removal process by specifing the `REMOVE_OLD_MODS_INCLUDE` and `REMOVE_OLD_MODS_EXCLUDE` variables. By default everything will be removed. You can also specify the `REMOVE_OLD_MODS_DEPTH` (default 16) variable to only delete files up to a certain level.
+
+> For example: `-e REMOVE_OLD_MODS=TRUE -e REMOVE_OLD_MODS_INCLUDE="*.jar" -e REMOVE_OLD_MODS_DEPTH=1` will remove all old jar files that are directly inside the `plugins/` or `mods/` directory.
 
 This works well if you want to have a common set of modules in a separate
 location, but still have multiple worlds with different server requirements
 in either persistent volumes or a downloadable archive.
 
+You can specify the destination of the configs that are located inside the `/config` mount by setting the `COPY_CONFIG_DEST` variable. The configs are copied recursivly to the `/data/config` directory by default. If a file was updated directly inside the `/data/*` directoy and is newer than the file in the `/config/*` mount it will not be overriden.
 
+> For example: `-v ./config:/config -e COPY_CONFIG_DEST=/data` will allow you to copy over your `bukkit.yml` and so on directly into the server directory.
 
 ### Replacing variables inside configs
 
@@ -531,6 +541,12 @@ The following example uses `/modpacks` as the container path as the pre-download
         -e CF_SERVER_MOD=/modpacks/SkyFactory_4_Server_4.1.0.zip \
         -p 25565:25565 -e EULA=TRUE --name mc itzg/minecraft-server
 
+#### Modpack data directory
+
+By default, CurseForge modpacks are expanded into the sub-directory `/data/FeedTheBeast` and executed from there. (The default location was chosen for legacy reasons, when Curse and FTB were maintained together.)
+
+The directory can be changed by setting `CF_BASE_DIR`, such as `-e CF_BASE_DIR=/data`.
+
 #### Buggy start scripts
 
 Some modpacks have buggy or overly complex start scripts. You can avoid using the bundled start script and use this image's standard server-starting logic by adding `-e USE_MODPACK_START_SCRIPT=false`.
@@ -737,11 +753,17 @@ To whitelist players for your Minecraft server, pass the Minecraft usernames sep
 
 If the `WHITELIST` environment variable is not used, any user can join your Minecraft server if it's publicly accessible.
 
+> NOTE: When `WHITELIST` is used the server property `white-list` will automatically get set to `true`.
+
+> By default, the players in `WHITELIST` are **added** to the final `whitelist.json` file by the Minecraft server. If you set `OVERRIDE_WHITELIST` to "true" then the `whitelist.json` file will be recreated on each server startup.
+
 ### Op/Administrator Players
 
 To add more "op" (aka adminstrator) users to your Minecraft server, pass the Minecraft usernames separated by commas via the `OPS` environment variable, such as
 
     docker run -d -e OPS=user1,user2 ...
+
+> By default, the players in `OPS` are **added** to the final `ops.json` file by the Minecraft server. If you set `OVERRIDE_OPS` to "true" then the `ops.json` file will be recreated on each server startup.
 
 ### Server icon
 
@@ -749,6 +771,10 @@ A server icon can be configured using the `ICON` variable. The image will be aut
 downloaded, scaled, and converted from any other image format:
 
     docker run -d -e ICON=http://..../some/image.png ...
+
+The server icon which has been set doesn't get overridden by default. It can be changed and overridden by setting `OVERRIDE_ICON` to `TRUE`.
+
+    docker run -d -e ICON=http://..../some/other/image.png -e OVERRIDE_ICON=TRUE...
 
 ### Rcon
 
